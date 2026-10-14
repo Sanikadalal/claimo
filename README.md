@@ -1,36 +1,64 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Claimo
 
-## Getting Started
+Claimo turns your Uber and Rapido receipt emails into a reimbursement-ready PDF report.
 
-First, run the development server:
+Connect Gmail with read-only access, pick a date range, review the rides it found, and download a PDF with every ride, per-provider totals and the amount to claim.
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+## Features
+
+- **Gmail integration**: Google OAuth 2.0 with the `gmail.readonly` scope. Claimo only searches mail from Uber and Rapido and never stores email content.
+- **Receipt parsing**: pulls the fare, ride type, pickup, drop and ride ID out of HTML receipt emails. Uber Eats orders and promotional mail from the same senders are skipped.
+- **Duplicate detection**: a receipt is flagged as a duplicate if it has the same ride ID as an earlier one, or the same provider and fare within 10 minutes (resent or forwarded receipts).
+- **PDF reports**: A4 report with a summary, per-provider totals and an itemised ride table that continues across pages. Built with `pdf-lib`.
+- **Safe totals**: amounts are stored in paise (integers) so totals never drift from floating point rounding.
+
+## How it works
+
+```
+Browser ──► /api/auth/login ──► Google consent ──► /api/auth/callback
+                                                      │  tokens encrypted (A256GCM) into an httpOnly cookie
+Browser ──► /api/receipts?from&to
+              │ Gmail search: from:(uber.com OR rapido.bike OR rapido.in) after:… before:…
+              │ fetch messages, 8 in parallel, up to 300 per search
+              │ parse each email → Receipt | null
+              └ mark duplicates → JSON
+Browser ──► /api/report (selected message ids)
+              └ re-reads receipts from Gmail (never trusts amounts sent by the browser) → PDF
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+| Path | Purpose |
+| --- | --- |
+| `src/lib/parsers/` | Uber and Rapido parsers, HTML-to-text, amount parsing |
+| `src/lib/dedupe.ts` | Duplicate detection and totals |
+| `src/lib/gmail.ts` | OAuth, token refresh, Gmail search and fetch |
+| `src/lib/report.ts` | PDF generation |
+| `src/lib/session.ts` | Encrypted session cookie |
+| `test/` | Unit tests and sample receipt emails |
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Tech stack
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Next.js (App Router), TypeScript, Gmail API, OAuth 2.0, jose, pdf-lib, Zod, Tailwind CSS, Vitest
 
-## Learn More
+## Running locally
 
-To learn more about Next.js, take a look at the following resources:
+1. Create an OAuth client (type: Web application) in Google Cloud Console, enable the Gmail API, and add `http://localhost:3000/api/auth/callback` as a redirect URI.
+2. Copy `.env.example` to `.env.local` and fill in the values.
+3. Install and run:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```bash
+npm install
+npm run dev
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Tests
 
-## Deploy on Vercel
+```bash
+npm test
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+18 tests cover amount parsing, both receipt parsers, filtering of non-ride mail, duplicate detection and PDF generation.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Limitations
+
+- The parsers are written against current Uber and Rapido receipt layouts. If a provider changes its email format, the parser for it needs updating.
+- Only Uber and Rapido are supported right now.
